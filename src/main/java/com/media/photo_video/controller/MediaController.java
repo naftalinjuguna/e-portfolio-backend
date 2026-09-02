@@ -23,7 +23,7 @@ import com.media.photo_video.services.MediaService;
 
 @RestController
 @RequestMapping("api/media")
-@CrossOrigin(origins = "https://e-portfolio-backend.onrender.com")
+@CrossOrigin
 public class MediaController {
 
     private final MediaService mediaService;
