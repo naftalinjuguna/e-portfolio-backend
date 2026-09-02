@@ -10,7 +10,7 @@ RUN mvn dependency:go-offline -B
 # Copy the source code and build the fat JAR
 # Note: Maven 3.9+ can cross-compile to Java 25 if specified in pom.xml
 COPY src ./src
-RUN mvn clean package -DskipTests
+RUN mvn clean package -DskipTests=true -Dmaven.test.skip=true
 
 # === STAGE 2: Run the application ===
 # Pull the actual native Java 25 runtime environment for execution
