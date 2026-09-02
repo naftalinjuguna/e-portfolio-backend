@@ -1,27 +1,27 @@
-# === STAGE 1: Build the application ===
-# Pull a generic modern Maven image
-FROM maven:3.9.6-eclipse-temurin-21 AS build
+# === STAGE 1: Build using an official Java 25 Image ===
+FROM eclipse-temurin:25-jdk-jammy AS build
 WORKDIR /app
 
-# Copy the pom.xml and download dependencies 
+# Install Maven manually on top of Java 25
+RUN apt-get update && apt-get install -y maven && rm -rf /var/lib/apt/lists/*
+
+# Copy configuration files and download project dependencies
 COPY pom.xml .
 RUN mvn dependency:go-offline -B
 
-# Copy the source code and build the fat JAR
-# Note: Maven 3.9+ can cross-compile to Java 25 if specified in pom.xml
+# Copy application source code and compile
 COPY src ./src
 RUN mvn clean package -DskipTests=true -Dmaven.test.skip=true
 
-# === STAGE 2: Run the application ===
-# Pull the actual native Java 25 runtime environment for execution
+# === STAGE 2: Lightweight Production Runtime ===
 FROM eclipse-temurin:25-jre-jammy
 WORKDIR /app
 
-# Copy the compiled JAR file from the build stage
+# Safely extract the compiled fat JAR from Stage 1
 COPY --from=build /app/target/*.jar app.jar
 
-# Expose port 8080
+# Open standard backend communications port
 EXPOSE 8080
 
-# Execute the application under Java 25
+# Spin up the compiled Spring Boot application
 ENTRYPOINT ["java", "-jar", "app.jar"]
