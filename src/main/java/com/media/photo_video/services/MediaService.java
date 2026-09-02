@@ -1,15 +1,15 @@
 package com.media.photo_video.services;
 
-import java.io.IOException;
-import java.nio.file.*;
 import java.time.LocalDateTime;
-import java.util.UUID;
+import java.util.Map;
 import java.util.List;
 
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import com.cloudinary.Cloudinary;
+import com.cloudinary.utils.ObjectUtils;
 import com.media.photo_video.model.Media;
 import com.media.photo_video.repository.MediaRepository;
 
@@ -17,50 +17,50 @@ import com.media.photo_video.repository.MediaRepository;
 public class MediaService {
 
     private final MediaRepository mediaRepository;
+    private final Cloudinary cloudinary;
 
-    private final Path uploadDirectory = Paths.get("uploads");
-
-    public MediaService(MediaRepository mediaRepository) {
+    // Inject both the database repository and the Cloudinary configuration bean
+    public MediaService(MediaRepository mediaRepository, Cloudinary cloudinary) {
         this.mediaRepository = mediaRepository;
+        this.cloudinary = cloudinary;
     }
 
-    public Media uploadImage(MultipartFile file) throws IOException {
+    public Media uploadImage(MultipartFile file) throws Exception {
 
         if (file.isEmpty()) {
             throw new IllegalArgumentException("File is empty");
         }
 
-        if (file.getContentType() == null || !file.getContentType().startsWith("image/")) {
-            throw new IllegalArgumentException("Nly image files are allowed");
+        String contentType = file.getContentType();
+        if (contentType == null || (!contentType.startsWith("image/") && !contentType.startsWith("video/"))) {
+            throw new IllegalArgumentException("Only image and video files are allowed");
         }
 
-        Files.createDirectories(uploadDirectory);
+        // Determine dynamic asset classification type required by Cloudinary API
+        String resourceType = contentType.startsWith("video/") ? "video" : "image";
 
+        // Upload raw byte streams directly to Cloudinary
+        Map<?, ?> uploadResult = cloudinary.uploader().upload(file.getBytes(), ObjectUtils.asMap(
+                "resource_type", resourceType
+        ));
+
+        // Extract the permanent HTTPS URL and the unique public ID (needed for deletion logs)
+        String secureUrl = (String) uploadResult.get("secure_url");
+        String publicId = (String) uploadResult.get("public_id");
         String originalFilename = file.getOriginalFilename();
 
-        String extension = "";
-
-        if (originalFilename != null && originalFilename.contains(".")) {
-            extension = originalFilename.substring(originalFilename.lastIndexOf("."));
-        }
-
-        String storedFilename = UUID.randomUUID() + extension;
-
-        Path filePath = uploadDirectory.resolve(storedFilename);
-
-        Files.copy(file.getInputStream(), filePath, StandardCopyOption.REPLACE_EXISTING);
-
         Media media = new Media();
-
         media.setOriginalFilename(originalFilename);
-        media.setStoredFilename(storedFilename);
-        media.setContentType(file.getContentType());
+
+        // CRITICAL STORAGE CHOICE:
+        // We reuse storedFilename to keep the publicId, and filePath to hold the absolute cloud web link
+        media.setStoredFilename(publicId);
+        media.setContentType(contentType);
         media.setFileSize(file.getSize());
-        media.setFilePath(filePath.toString());
+        media.setFilePath(secureUrl);
         media.setCreatedAt(LocalDateTime.now());
 
         return mediaRepository.save(media);
-
     }
 
     public List<Media> getAllMedia() {
@@ -71,14 +71,20 @@ public class MediaService {
         return mediaRepository.findById(id).orElseThrow(() -> new RuntimeException("Media not found"));
     }
 
-    public void deleteMedia(Long id) throws IOException {
+    public void deleteMedia(Long id) throws Exception {
         Media media = mediaRepository.findById(id).orElseThrow(() -> new RuntimeException("Media not found"));
 
-        Path filePath = Paths.get(media.getFilePath());
+        // Determine target classification type for deletion routing 
+        String resourceType = media.getContentType() != null && media.getContentType().startsWith("video/")
+                ? "video"
+                : "image";
 
-        Files.deleteIfExists(filePath);
+        // Remove the asset permanently from Cloudinary servers using the stored public ID
+        cloudinary.uploader().destroy(media.getStoredFilename(), ObjectUtils.asMap(
+                "resource_type", resourceType
+        ));
 
+        // Delete the entry record from your Aiven MySQL database
         mediaRepository.delete(media);
     }
-
 }
